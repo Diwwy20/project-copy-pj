@@ -5,7 +5,7 @@ export const Footer = () => {
     <footer className="bg-white border-t border-gray-200 mt-auto">
       <div className="max-w-6xl mx-auto px-4 py-6 flex flex-col sm:flex-row justify-center items-center gap-2 text-xs">
         <div className="font-bold text-gray-600 tracking-wide">
-          Product Copy PJ
+          Product Data Copy Station
         </div>
 
         <div className="text-gray-400">
