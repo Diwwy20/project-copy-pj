@@ -57,7 +57,7 @@ export const parseCSVData = (csvText: string) => {
 
   const idxMap = {
     sku: getIdx(["Parent SKU", "SKU", "parent_sku", "parent_sku_code"]),
-    nameEn: getIdx(["Product Name (EN)", "product_name_en", "product_name"]),
+    nameEn: getIdx(["Product Name (EN)", "product_name"]),
     nameTh: getIdx(["Product Name (TH)", "product_name_th"]),
     descEn: getIdx(["Product Description (EN)", "product_description"]),
     descTh: getIdx(["Product Description (TH)", "product_description_th"]),
