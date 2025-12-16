@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useRef } from "react";
 import {
   UploadCloud,
   Search,
@@ -11,7 +11,7 @@ import {
   ChevronDown,
   AlertCircle,
   Package,
-  LucideIcon,
+  type LucideIcon,
 } from "lucide-react";
 
 // --- Type Definitions ---
@@ -49,6 +49,89 @@ const DEFAULT_DATA: ProductData = {
   video: "",
 };
 
+// --- Sub-Components (Extracted Outside App) ---
+
+// 1. SectionHeader
+interface SectionHeaderProps {
+  icon: LucideIcon;
+  title: string;
+}
+
+const SectionHeader = ({ icon: Icon, title }: SectionHeaderProps) => (
+  <div className="flex items-center gap-2 pb-2 border-b border-gray-200 mb-4 mt-8">
+    <div className="p-1.5 bg-blue-100 rounded-full text-blue-700">
+      <Icon className="w-5 h-5" />
+    </div>
+    <h2 className="text-lg font-bold text-gray-800">{title}</h2>
+  </div>
+);
+
+// 2. CopyRow
+interface CopyRowProps {
+  label: string;
+  value: string;
+  id: string;
+  multiline?: boolean;
+  highlight?: boolean;
+  copiedField: string | null;
+  onCopy: (text: string, id: string) => void;
+}
+
+const CopyRow = ({
+  label,
+  value,
+  id,
+  multiline = false,
+  highlight = false,
+  copiedField,
+  onCopy,
+}: CopyRowProps) => (
+  <div
+    className={`group relative bg-white p-3 rounded-xl border transition-all flex flex-col gap-1 ${
+      highlight
+        ? "border-blue-300 shadow-md"
+        : "border-gray-200 hover:border-blue-400 shadow-sm"
+    }`}
+  >
+    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+      {label}
+    </span>
+    <div className="flex items-start gap-2">
+      <div
+        className={`flex-1 text-sm font-mono text-gray-800
+            ${
+              multiline
+                ? "whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto custom-scrollbar"
+                : "truncate"
+            }
+            ${highlight ? "font-bold" : ""}`}
+      >
+        {value || (
+          <span className="text-gray-300 italic font-normal">No Data</span>
+        )}
+      </div>
+      <button
+        onClick={() => onCopy(value, id)}
+        disabled={!value}
+        className={`shrink-0 p-2 rounded-lg transition-all flex items-center gap-1 text-xs font-medium
+            ${
+              copiedField === id
+                ? "bg-green-100 text-green-700"
+                : "bg-gray-100 text-gray-600 hover:bg-blue-600 hover:text-white group-hover:bg-blue-50 group-hover:text-blue-600"
+            } ${!value && "opacity-50 cursor-not-allowed"}`}
+      >
+        {copiedField === id ? (
+          <Check className="w-4 h-4" />
+        ) : (
+          <Copy className="w-4 h-4" />
+        )}
+        {copiedField === id ? "Copied" : "Copy"}
+      </button>
+    </div>
+  </div>
+);
+
+// --- Main App Component ---
 export default function App() {
   // --- States ---
   const [productDatabase, setProductDatabase] = useState<
@@ -66,70 +149,45 @@ export default function App() {
   const [rawFile, setRawFile] = useState<ArrayBuffer | null>(null);
   const [fileName, setFileName] = useState("");
 
-  // Copy Feedback State (key = fieldName)
+  // Copy Feedback State
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- File Handling ---
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setRawFile(event.target?.result as ArrayBuffer);
-    };
-    reader.readAsArrayBuffer(file);
-    // Clear search status and current data upon new upload
-    setCurrentData(DEFAULT_DATA);
-    setSearchSku("");
-    setSearchStatus("idle");
-  };
-
-  // --- Effects ---
-  useEffect(() => {
-    if (rawFile) {
-      decodeAndParse(rawFile, encoding);
-    }
-  }, [rawFile, encoding]);
-
   /**
-   * Simple CSV line parser that handles quotes.
-   * NOTE: This is a simplified implementation and might not handle all complex CSV edge cases.
+   * Logic การ Parse CSV แยกออกมาเป็นฟังก์ชัน
    */
-  const parseCSVLine = (text: string): string[] => {
-    const result = [];
-    let cell = "";
-    let inQuotes = false;
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
-      if (char === '"') {
-        // Handle escaped quotes within quoted field ("" -> ")
-        if (inQuotes && text[i + 1] === '"') {
-          cell += '"';
-          i++; // Skip next quote
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (char === "," && !inQuotes) {
-        result.push(cell.trim());
-        cell = "";
-      } else cell += char;
-    }
-    result.push(cell.trim());
-    return result;
-  };
-
   const parseCSV = (csvText: string) => {
     const lines = csvText.split(/\r\n|\n/);
 
-    // Heuristic: Find header row by looking for key columns like "Product Name" or "SKU"
+    // Heuristic: Find header row
     let headerRowIndex = -1;
     let headers: string[] = [];
 
+    // Helper for line parsing
+    const parseCSVLine = (text: string): string[] => {
+      const result = [];
+      let cell = "";
+      let inQuotes = false;
+      for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        if (char === '"') {
+          if (inQuotes && text[i + 1] === '"') {
+            cell += '"';
+            i++;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (char === "," && !inQuotes) {
+          result.push(cell.trim());
+          cell = "";
+        } else cell += char;
+      }
+      result.push(cell.trim());
+      return result;
+    };
+
     for (let i = 0; i < Math.min(lines.length, 20); i++) {
-      // Crude check for a header line
       if (
         lines[i].toLowerCase().includes("sku") &&
         lines[i].toLowerCase().includes("price")
@@ -141,7 +199,6 @@ export default function App() {
     }
 
     if (headerRowIndex === -1 && lines.length > 0) {
-      // Fallback: Try Row 0
       console.warn("Could not auto-detect header. Using row 0.");
       headerRowIndex = 0;
       headers = parseCSVLine(lines[0]);
@@ -154,14 +211,12 @@ export default function App() {
     const newDb: Record<string, ProductData> = {};
     let count = 0;
 
-    // Helper to find column index safely (case-insensitive and trimmed)
     const getIdx = (keywords: string[]) =>
       headers.findIndex(
         (h) =>
           h && keywords.some((k) => h.toLowerCase().trim() === k.toLowerCase())
       );
 
-    // Map columns (added common variations and snake_case)
     const idxSku = getIdx([
       "Parent SKU",
       "SKU",
@@ -195,7 +250,6 @@ export default function App() {
 
     const idxVideo = getIdx(["Video", "Video URL", "video", "video_url"]);
 
-    // Image columns usually: Cover Image, Image 2, Image 3...
     const imgIndices: number[] = [];
     headers.forEach((h, idx) => {
       if (
@@ -213,12 +267,11 @@ export default function App() {
       if (!line.trim()) continue;
 
       const row = parseCSVLine(line);
-      if (row.length <= idxSku) continue; // Skip if row is malformed or too short
+      if (row.length <= idxSku) continue;
 
       const sku = row[idxSku]?.trim();
 
       if (sku) {
-        // Collect images (filter out empty strings)
         const imgs = imgIndices
           .map((idx) => row[idx])
           .filter((url) => url && url.trim().length > 0);
@@ -230,7 +283,6 @@ export default function App() {
           descEn: row[idxDescEn] || "",
           descTh: row[idxDescTh] || "",
           brand: row[idxBrand] || "",
-          // Clean price/stock/weight/dims from commas/non-numeric characters
           price: (row[idxPrice] || "0").replace(/[^\d.]/g, ""),
           stock: (row[idxStock] || "0").replace(/[^\d.]/g, ""),
           weight: (row[idxWeight] || "0").replace(/[^\d.]/g, ""),
@@ -248,19 +300,61 @@ export default function App() {
     setDbSize(count);
   };
 
+  /**
+   * ฟังก์ชันกลางสำหรับ Decode และสั่ง Parse
+   */
   const decodeAndParse = (buffer: ArrayBuffer, enc: string) => {
     try {
       const decoder = new TextDecoder(enc);
       const text = decoder.decode(buffer);
       parseCSV(text);
     } catch (error) {
-      // Using console.error instead of alert as per instructions
       console.error(
         "Error decoding file. Please try a different encoding.",
         error
       );
     }
   };
+
+  // --- Event Handlers (Modified) ---
+
+  // 1. Handle File Upload
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setFileName(file.name);
+
+    // Clear old data
+    setCurrentData(DEFAULT_DATA);
+    setSearchSku("");
+    setSearchStatus("idle");
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const buffer = event.target?.result as ArrayBuffer;
+
+      // Update State
+      setRawFile(buffer);
+
+      // Trigger Logic IMMEDIATELY (Fix for cascading render warning)
+      decodeAndParse(buffer, encoding);
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  // 2. Handle Encoding Change
+  const handleEncodingChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newEncoding = e.target.value;
+    setEncoding(newEncoding);
+
+    // ถ้ามีไฟล์ค้างอยู่ ให้ Re-parse ทันที
+    if (rawFile) {
+      decodeAndParse(rawFile, newEncoding);
+    }
+  };
+
+  // ** REMOVED useEffect BLOCK HERE ** // เราย้าย logic ไปไว้ใน handleFileUpload และ handleEncodingChange แล้ว
 
   // --- Interaction ---
   const handleSearch = (e?: React.FormEvent) => {
@@ -273,14 +367,13 @@ export default function App() {
       setSearchStatus("found");
       setTimeout(() => setSearchStatus("idle"), 2000);
     } else {
-      setCurrentData(DEFAULT_DATA); // Clear data if not found
+      setCurrentData(DEFAULT_DATA);
       setSearchStatus("not-found");
     }
   };
 
   const copyToClipboard = (text: string, fieldId: string) => {
     if (!text) return;
-    // For images, ensure URLs are separated by newline for easy pasting
     const textToCopy =
       fieldId === "images" ? currentData.images.join("\n") || text : text;
 
@@ -289,93 +382,18 @@ export default function App() {
     setTimeout(() => setCopiedField(null), 1500);
   };
 
-  // --- Render Components ---
-  const CopyRow = ({
-    label,
-    value,
-    id,
-    multiline = false,
-    highlight = false,
-  }: {
-    label: string;
-    value: string;
-    id: string;
-    multiline?: boolean;
-    highlight?: boolean;
-  }) => (
-    <div
-      className={`group relative bg-white p-3 rounded-xl border transition-all flex flex-col gap-1 ${
-        highlight
-          ? "border-blue-300 shadow-md"
-          : "border-gray-200 hover:border-blue-400 shadow-sm"
-      }`}
-    >
-      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-        {label}
-      </span>
-      <div className="flex items-start gap-2">
-        <div
-          className={`flex-1 text-sm font-mono text-gray-800
-           ${
-             multiline
-               ? "whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto custom-scrollbar"
-               : "truncate"
-           }
-           ${highlight ? "font-bold" : ""}`}
-        >
-          {value || (
-            <span className="text-gray-300 italic font-normal">No Data</span>
-          )}
-        </div>
-        <button
-          onClick={() => copyToClipboard(value, id)}
-          disabled={!value}
-          className={`shrink-0 p-2 rounded-lg transition-all flex items-center gap-1 text-xs font-medium
-            ${
-              copiedField === id
-                ? "bg-green-100 text-green-700"
-                : "bg-gray-100 text-gray-600 hover:bg-blue-600 hover:text-white group-hover:bg-blue-50 group-hover:text-blue-600"
-            } ${!value && "opacity-50 cursor-not-allowed"}`}
-        >
-          {copiedField === id ? (
-            <Check className="w-4 h-4" />
-          ) : (
-            <Copy className="w-4 h-4" />
-          )}
-          {copiedField === id ? "Copied" : "Copy"}
-        </button>
-      </div>
-    </div>
-  );
-
-  const SectionHeader = ({
-    icon: Icon,
-    title,
-  }: {
-    icon: LucideIcon;
-    title: string;
-  }) => (
-    <div className="flex items-center gap-2 pb-2 border-b border-gray-200 mb-4 mt-8">
-      <div className="p-1.5 bg-blue-100 rounded-full text-blue-700">
-        <Icon className="w-5 h-5" />
-      </div>
-      <h2 className="text-lg font-bold text-gray-800">{title}</h2>
-    </div>
-  );
-
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-gray-800 pb-20">
-      {/* Custom Scrollbar Style */}
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {
           width: 6px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
-          background-color: #cbd5e1; /* slate-300 */
+          background-color: #cbd5e1;
           border-radius: 3px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
-          background-color: #f1f5f9; /* slate-100 */
+          background-color: #f1f5f9;
         }
       `}</style>
 
@@ -408,7 +426,7 @@ export default function App() {
               <div className="relative">
                 <select
                   value={encoding}
-                  onChange={(e) => setEncoding(e.target.value)}
+                  onChange={handleEncodingChange} // Changed to custom handler
                   className="bg-gray-50 border border-gray-300 text-xs py-2 pl-2 pr-8 rounded-lg focus:ring-blue-500 focus:border-blue-500 appearance-none transition"
                 >
                   <option value="utf-8">UTF-8 (Standard)</option>
@@ -516,10 +534,9 @@ export default function App() {
           </div>
         )}
 
-        {/* Data Display Panel (Visible only when a product is found) */}
+        {/* Data Display Panel */}
         {currentData.sku && (
           <div className="grid grid-cols-1 gap-6">
-            {/* Product SKU and Brand Header */}
             <div className="bg-white p-6 rounded-xl shadow-2xl border border-blue-200">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 border-b pb-3">
                 <h2 className="text-2xl font-extrabold text-blue-700 flex items-center gap-2">
@@ -534,7 +551,7 @@ export default function App() {
                 </span>
               </div>
 
-              {/* 3. CORE METADATA (Price, Stock, Dimensions) */}
+              {/* 3. CORE METADATA */}
               <SectionHeader
                 icon={DollarSign}
                 title="Core Metadata & Logistics"
@@ -545,20 +562,25 @@ export default function App() {
                   value={currentData.price}
                   id="price"
                   highlight
+                  copiedField={copiedField}
+                  onCopy={copyToClipboard}
                 />
                 <CopyRow
                   label="Stock Qty (Numeric)"
                   value={currentData.stock}
                   id="stock"
                   highlight
+                  copiedField={copiedField}
+                  onCopy={copyToClipboard}
                 />
                 <CopyRow
                   label="Weight (g)"
                   value={currentData.weight}
                   id="weight"
                   highlight
+                  copiedField={copiedField}
+                  onCopy={copyToClipboard}
                 />
-                {/* Custom Dimension Display Row */}
                 <div className="bg-white p-3 rounded-xl border border-blue-300 shadow-md flex flex-col gap-1">
                   <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Dimensions (L x W x H)
@@ -579,11 +601,15 @@ export default function App() {
                   label="Product Name (EN)"
                   value={currentData.nameEn}
                   id="nameEn"
+                  copiedField={copiedField}
+                  onCopy={copyToClipboard}
                 />
                 <CopyRow
                   label="Brand ID"
                   value={currentData.brand}
                   id="brand"
+                  copiedField={copiedField}
+                  onCopy={copyToClipboard}
                 />
               </div>
               <CopyRow
@@ -591,6 +617,8 @@ export default function App() {
                 value={currentData.descEn}
                 id="descEn"
                 multiline
+                copiedField={copiedField}
+                onCopy={copyToClipboard}
               />
 
               {/* 5. THAI DATA */}
@@ -600,11 +628,15 @@ export default function App() {
                   label="Product Name (TH)"
                   value={currentData.nameTh}
                   id="nameTh"
+                  copiedField={copiedField}
+                  onCopy={copyToClipboard}
                 />
                 <CopyRow
                   label="SKU / Product Code"
                   value={currentData.sku}
                   id="sku"
+                  copiedField={copiedField}
+                  onCopy={copyToClipboard}
                 />
               </div>
               <CopyRow
@@ -612,6 +644,8 @@ export default function App() {
                 value={currentData.descTh}
                 id="descTh"
                 multiline
+                copiedField={copiedField}
+                onCopy={copyToClipboard}
               />
 
               {/* 6. MEDIA ASSETS */}
@@ -625,6 +659,8 @@ export default function App() {
                   id="images"
                   multiline
                   highlight={currentData.images.length > 0}
+                  copiedField={copiedField}
+                  onCopy={copyToClipboard}
                 />
                 <div className="mt-2 text-xs text-gray-500 flex items-center gap-1">
                   <RefreshCw className="w-3 h-3" />
@@ -633,7 +669,13 @@ export default function App() {
               </div>
 
               {/* Video */}
-              <CopyRow label="Video URL" value={currentData.video} id="video" />
+              <CopyRow
+                label="Video URL"
+                value={currentData.video}
+                id="video"
+                copiedField={copiedField}
+                onCopy={copyToClipboard}
+              />
             </div>
           </div>
         )}
